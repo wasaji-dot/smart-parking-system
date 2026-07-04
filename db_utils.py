@@ -33,7 +33,8 @@ def connect_db(db_filename="parking.db"):
 
 
 def init_tables_safe(cursor):
-    """安全创建表，并兼容旧库自动增加 slot_id 列"""
+    """安全创建表，并兼容旧库自动增加 slot_id 列，增加指令表"""
+    # 1. 当前停车表
     cursor.execute('''  
     CREATE TABLE IF NOT EXISTS ParkingVehicles ( 
         id INTEGER PRIMARY KEY AUTOINCREMENT,  
@@ -49,6 +50,7 @@ def init_tables_safe(cursor):
     except sqlite3.OperationalError:
         pass
 
+    # 2. 历史记录表
     cursor.execute('''  
     CREATE TABLE IF NOT EXISTS ParkingInfo (  
         id INTEGER PRIMARY KEY AUTOINCREMENT,  
@@ -64,8 +66,16 @@ def init_tables_safe(cursor):
     except sqlite3.OperationalError:
         pass
 
-    print("\n✅ 表结构初始化完成")
-
+    # 🟢 新增 3. 硬件指令表（用于 Flask 下发指令给 Pygame 主程序）
+    cursor.execute('''  
+    CREATE TABLE IF NOT EXISTS Commands (  
+        id INTEGER PRIMARY KEY AUTOINCREMENT,  
+        action TEXT,  
+        slot TEXT,  
+        status INTEGER DEFAULT 0  
+    )
+    ''')
+    print("\n✅ 表结构初始化完成（新增 Commands 指令表）")
 
 def import_excel_to_db(excel_info_path, excel_vehicle_path, db_filename="parking.db"):
     """导入Excel数据到数据库（加入了详细报错打印和空值过滤）"""

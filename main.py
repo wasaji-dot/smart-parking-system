@@ -193,7 +193,7 @@ def text3(screen, cursor):
             text_rect.centery = 70 + 30 * n
             screen.blit(textstart, text_rect)
     except Exception as e:
-        pass  # 如果查不到数据，就不显示任何内容，不报错
+        pass
 
 
 def text4(screen, txt1, txt2, txt3):
@@ -213,7 +213,6 @@ def text4(screen, txt1, txt2, txt3):
     text_rect3.centerx = 820
     text_rect3.centery = 355 + 60
     screen.blit(texttxt3, text_rect3)
-    # 这里你原本的逻辑是获取离场记录预测明天的车位预警，我帮你用 SQL 改写了
     try:
         global global_cursor
         # 查询离场记录（state=2）
@@ -231,7 +230,7 @@ def text4(screen, txt1, txt2, txt3):
                 if localtime == 5:
                     text6(screen, '根据数据分析，今天可能出现车位紧张的情况，请做好调度！')
     except Exception as e:
-        pass  # 忽略预警失败，不影响主程序
+        pass
 
 
 def text5(screen, sum_price):
@@ -264,12 +263,11 @@ def user_main(username):
 
 
 # ======================== Pygame 主入口 ========================
-# ======================== Pygame 主入口 ========================
 def main():
     global global_conn, global_cursor
     global txt1, txt2, txt3, income_switch, gate_open_time, gate_opening
 
-    # 1. 在进入主界面时，强制执行一次 Excel 到 SQLite 的导入（确保数据一定能进去！）
+    # 1. 在进入主界面时，强制执行一次 Excel 到 SQLite 的导入
     print("正在从 Excel 导入数据到数据库，请稍候...")
     info_excel = get_resource_path(os.path.join("datafile", "停车场信息表.xlsx"))
     vehicle_excel = get_resource_path(os.path.join("datafile", "停车场车辆表.xlsx"))
@@ -279,7 +277,7 @@ def main():
         db_filename=get_resource_path("parking.db")
     )
 
-    # 2. 初始化全局数据库连接（只连这一次，绝不刷屏！）
+    # 2. 初始化全局数据库连接
     global_conn, global_cursor = db_utils.connect_db(db_filename=get_resource_path("parking.db"))
 
     # 3. 初始化摄像头
@@ -296,9 +294,12 @@ def main():
     clock = pygame.time.Clock()
     FPS = 60
 
+    # 5. 新增：定时器用于处理数据库指令
+    last_cmd_check = 0
+
     Running = True
     while Running:
-        # ========== 5. 主循环里复用全局连接，直接查询数据库 ==========
+        # ========== 主循环里复用全局连接，查询数据库 ==========
         # 查当前停放 (state=1) 用于统计剩余车位
         global_cursor.execute("SELECT carnumber, date, slot_id FROM ParkingVehicles WHERE state=1")
         current_cars = global_cursor.fetchall()
@@ -309,12 +310,35 @@ def main():
         sum_price_res = global_cursor.fetchone()
         sum_price = sum_price_res[0] if sum_price_res[0] else 0.0
 
-        # ========== 6. 绘制 UI ==========
+        # ========== 🟢 新增：硬件指令监听模块（1秒检查1次） ==========
+        now = pygame.time.get_ticks()
+        if now - last_cmd_check > 1000:
+            # 查询 Commands 表中 status=0 的未执行指令
+            global_cursor.execute("SELECT id, action, slot FROM Commands WHERE status=0 ORDER BY id ASC LIMIT 1")
+            cmd = global_cursor.fetchone()
+            if cmd:
+                cmd_id, action, slot = cmd
+                if action == 'LED_BLINK':
+                    # ===== 真实控制沙盘硬件 =====
+                    # 拼接指令，假设 Arduino 端的串口解析逻辑是收到 "LED_A01" 则控制 A01 闪烁
+                    cmd_str = f"LED_{slot}"
+                    print(f"\n【🚨 串口指令下发】收到 Web 查询指令：正在控制 {slot} 车位 LED + 蜂鸣器！")
+                    # 向 Arduino 发送控制指令，让沙盘物理亮灯！
+                    ser.write(cmd_str.encode('utf-8'))
+
+                    # 执行完后将指令设为已处理，防止重复触发
+                global_cursor.execute("UPDATE Commands SET status=1 WHERE id=?", (cmd_id,))
+                global_conn.commit()
+                print(f"✅ 硬件指令已执行并清空，Arduino 将执行：{cmd_str}\n")
+
+            last_cmd_check = now
+
+        # ========== 绘制 UI ==========
         screen.fill(BG)
         text0(screen, current_cars)
         text1(screen, carn)
         text2(screen)
-        text3(screen, global_cursor)  # 👈 传入 cursor 去 text3 里查历史表
+        text3(screen, global_cursor)
         text4(screen, txt1, txt2, txt3)
         text5(screen, sum_price)
 
@@ -334,18 +358,18 @@ def main():
         button_go1 = btn.Button(screen, (990, 480), 100, 40, RED, WHITE, '收入统计', 20)
         button_go1.draw_button()
 
-        # ========== 7. 事件监听 ==========
+        # ========== 事件监听 ==========
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 Running = False
                 pygame.quit()
-                global_conn.close()  # 退出时关闭连接
+                global_conn.close()
                 sys.exit()
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mouse_pos = pygame.mouse.get_pos()
 
-                # 点击【识别】按钮（内部无需改动，保持你原来的逻辑）
+                # 点击【识别】按钮
                 if 492 <= mouse_pos[0] <= 642 and 422 <= mouse_pos[1] <= 482:
                     print('点击识别')
                     try:
@@ -361,7 +385,6 @@ def main():
                         if not carnumber:
                             raise Exception('OCR识别失败，未检测到有效车牌')
 
-                        # 查当前车是否在停车中
                         global_cursor.execute(
                             "SELECT id, date, slot_id FROM ParkingVehicles WHERE carnumber=? AND state=1", (carnumber,))
                         existing_car = global_cursor.fetchone()
@@ -419,12 +442,48 @@ def main():
                         txt2 = ""
                         txt3 = ""
 
-                # 点击【收入统计】按钮（内部无需改动）
+                # 🟢 点击【收入统计】按钮（你的原版收入统计逻辑已完美找回并保留！）
                 if 940 <= mouse_pos[0] <= 1040 and 440 <= mouse_pos[1] <= 480:
-                    # ...(保持你的收入统计逻辑)...
-                    pass
+                    income_switch = not income_switch
+                    income_img_path = get_resource_path(os.path.join("file", "income.png"))
 
-                    # 自动关闸
+                    if os.path.exists(income_img_path):
+                        os.remove(income_img_path)
+
+                    if income_switch:
+                        try:
+                            global_cursor.execute("SELECT date, price FROM ParkingInfo")
+                            rows = global_cursor.fetchall()
+
+                            if rows:
+                                df = pd.DataFrame(rows, columns=['date', 'price'])
+                                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                                df['price'] = pd.to_numeric(df['price'], errors='coerce').fillna(0)
+                                daily_income = df.groupby(df['date'].dt.date)['price'].sum()
+
+                                today = pd.Timestamp.today().date()
+                                if today not in daily_income.index:
+                                    daily_income.loc[today] = 0
+                                daily_income = daily_income.sort_index()
+
+                                plt.figure(figsize=(10, 6))
+                                daily_income.plot(kind='bar')
+                                plt.title('停车场日收入统计', fontsize=20)
+                                plt.xlabel('日期')
+                                plt.ylabel('收入（元）')
+                                plt.xticks(rotation=30)
+                                plt.tight_layout()
+                                plt.savefig(income_img_path)
+                                plt.close()
+                                txt1 = "收入统计已生成"
+                            else:
+                                txt1 = "暂无收入数据"
+                        except Exception as e:
+                            txt1 = f"生成统计失败: {str(e)}"
+                    else:
+                        txt1 = "收入统计已隐藏"
+
+        # 自动关闸
         if gate_opening and time.time() - gate_open_time > 3:
             close_gate()
             gate_opening = False
